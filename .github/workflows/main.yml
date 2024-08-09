@@ -1,0 +1,60 @@
+name: cn-ip-cidr
+
+on:
+  schedule:
+    - cron: 0 * * * *
+
+jobs:
+  cn-ip-cidr:
+    name: Generate CN IP CIDR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repository
+        run: |
+          git clone https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} .
+
+      - name: Download and Convert IP CIDR
+        run: |
+          mkdir -p ipv4 ipv6
+          wget -qO ipv4/cn.zone https://raw.githubusercontent.com/misakaio/chnroutes2/master/chnroutes.txt --no-check-certificate --tries=10 --wait=5
+          wget -qO ipv6/cn.zone https://www.ipdeny.com/ipv6/ipaddresses/blocks/cn.zone --no-check-certificate --tries=10 --wait=5
+          sed -i '/#/d' ipv4/cn.zone
+          cat ipv4/cn.zone ipv6/cn.zone > cn.zone
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" cn.zone > cn.yml
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" ipv4/cn.zone > ipv4/cn.yml
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" ipv6/cn.zone > ipv6/cn.yml
+          sed -e '/\./s/^/IP-CIDR,/' -e '/:/s/^/IP-CIDR6,/' cn.zone > cn.list
+          sed -e '/\./s/^/IP-CIDR,/' ipv4/cn.zone > ipv4/cn.list
+          sed -e '/:/s/^/IP-CIDR6,/' ipv6/cn.zone > ipv6/cn.list
+
+      - name: Update Repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan orphan
+          git add .
+          git commit -m "Update at $(TZ=PRC date)"
+          git branch -D main
+          git branch -m main
+          git push -f origin main
+
+      - name: Purge CDN Cache
+        run: |
+          wget -qO /dev/null \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/cn.zone \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/cn.yml \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/cn.list \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv4/cn.zone \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv4/cn.yml \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv4/cn.list \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv6/cn.zone \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv6/cn.yml \
+            https://purge.jsdelivr.net/gh/codexss/cn-ip-cidr/ipv6/cn.list
+
+      - name: Delete Old Workflow Runs
+        run: |
+          gh run list --json databaseId | jq -r '.[] | select(.databaseId != ${{ github.run_id }}) | .databaseId' |
+            xargs -IID \
+              gh api repos/${{ github.repository }}/actions/runs/ID -X DELETE
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
