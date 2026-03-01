@@ -1,0 +1,58 @@
+name: cn-ip-cidr
+
+on:
+  schedule:
+    - cron: 0 17 * * *
+  workflow_dispatch:
+
+jobs:
+  cn-ip-cidr:
+    name: Generate CN IP CIDR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone Repository
+        run: |
+          git clone https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} .
+
+      - name: Download IP CIDR
+        run: |
+          mkdir -p ipv4 ipv6
+          wget -qO- https://raw.githubusercontent.com/tmplink/IPDB/refs/heads/main/ipv4/cidr/CN.txt > ipv4/cn.zone
+          wget -qO- https://raw.githubusercontent.com/tmplink/IPDB/refs/heads/main/ipv6/cidr/CN.txt > ipv6/cn.zone
+
+      - name: Convert IP CIDR
+        run: |
+          cat ipv4/cn.zone ipv6/cn.zone > cn.zone
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" cn.zone > cn.yml
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" ipv4/cn.zone > ipv4/cn.yml
+          sed "s/^\(.*\)$/  - '\1'/;1ipayload:" ipv6/cn.zone > ipv6/cn.yml
+          sed -e '/\./s/^/IP-CIDR,/' -e '/:/s/^/IP-CIDR6,/' cn.zone > cn.list
+          sed -e '/\./s/^/IP-CIDR,/' ipv4/cn.zone > ipv4/cn.list
+          sed -e '/:/s/^/IP-CIDR6,/' ipv6/cn.zone > ipv6/cn.list
+
+      - name: Update Repository
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git checkout --orphan orphan
+          git add .
+          git commit -m "Update at $(TZ=PRC date)"
+          git branch -D main
+          git branch -m main
+          git push -f origin main
+
+      - name: Purge CDN Cache
+        run: |
+          for x in "" "ipv4/" "ipv6/"; do
+              for y in "cn.zone" "cn.yml" "cn.list"; do
+                  wget -qO /dev/null "https://purge.jsdelivr.net/gh/${{ github.repository }}/${x}${y}" || true
+              done
+          done
+
+      - name: Delete Old Workflow Runs
+        run: |
+          gh run list --json databaseId | jq -r '.[] | select(.databaseId != ${{ github.run_id }}) | .databaseId' |
+            xargs -IID \
+              gh api repos/${{ github.repository }}/actions/runs/ID -X DELETE
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
